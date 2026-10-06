@@ -1,40 +1,90 @@
 /**
- * 炫彩旋转线条 - 班级随机点名系统 (多班级+KV云端同步+老虎机视口重构版)
+ * 经典星轨背景 - 班级随机点名系统 (多年份/学校/班级 + 严格密码鉴权管理 + 老虎机版)
  * 单文件 Cloudflare Workers 部署
  */
 
-const KV_KEY = "multi_class_students_data_v1";
+const KV_KEY = "multi_class_students_data_v2";
 
-// 默认班级数据（首次部署时使用）
+// 默认多层级数据结构（首次部署或数据为空时使用）
 const DEFAULT_DATA = {
+  activeYear: "2026年",
+  activeSchool: "实验中学",
   activeClass: "高一(1)班",
-  classes: {
-    "高一(1)班": ["张三", "李四", "王五", "赵六", "钱七", "孙八", "周九"],
-    "高一(2)班": ["陈一", "褚二", "卫三", "蒋四", "沈五", "韩六"]
+  data: {
+    "2026年": {
+      "实验中学": {
+        "高一(1)班": ["张三", "李四", "王五", "赵六", "钱七", "孙八", "周九"],
+        "高一(2)班": ["陈一", "褚二", "卫三", "蒋四", "沈五", "韩六"]
+      }
+    }
   }
 };
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const expectedPass = env.BASICS_PASS || " 在这里设置管理员密码 ";
 
-    // ---------------- API 1: 读取所有班级数据 ----------------
+    // ---------------- API 1: 读取所有数据（抽签使用，无需密码） ----------------
     if (url.pathname === "/api/get-classes" && request.method === "GET") {
       let data = await env.CLASS_KV.get(KV_KEY, { type: "json" });
+      
       if (!data) {
         data = DEFAULT_DATA;
         await env.CLASS_KV.put(KV_KEY, JSON.stringify(data));
+      } else if (data.classes && !data.data) {
+        data = {
+          activeYear: "2026年",
+          activeSchool: "默认学校",
+          activeClass: data.activeClass || Object.keys(data.classes)[0] || "高一(1)班",
+          data: {
+            "2026年": {
+              "默认学校": data.classes
+            }
+          }
+        };
       }
+
       return new Response(JSON.stringify(data), {
         headers: { "Content-Type": "application/json; charset=utf-8" }
       });
     }
 
-    // ---------------- API 2: 保存所有班级数据 ----------------
+    // ---------------- API 2: 验证管理员密码 ----------------
+    if (url.pathname === "/api/verify-pass" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        if (body.password === expectedPass) {
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { "Content-Type": "application/json; charset=utf-8" }
+          });
+        } else {
+          return new Response(JSON.stringify({ success: false, error: "密码错误！" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json; charset=utf-8" }
+          });
+        }
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: e.message }), {
+          status: 500,
+          headers: { "Content-Type": "application/json; charset=utf-8" }
+        });
+      }
+    }
+
+    // ---------------- API 3: 保存所有数据（需要密码保护） ----------------
     if (url.pathname === "/api/save-classes" && request.method === "POST") {
       try {
         const body = await request.json();
-        await env.CLASS_KV.put(KV_KEY, JSON.stringify(body));
+
+        if (body.password !== expectedPass) {
+          return new Response(JSON.stringify({ success: false, error: "密码错误！修改未保存。" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json; charset=utf-8" }
+          });
+        }
+
+        await env.CLASS_KV.put(KV_KEY, JSON.stringify(body.data));
         return new Response(JSON.stringify({ success: true }), {
           headers: { "Content-Type": "application/json; charset=utf-8" }
         });
@@ -84,7 +134,7 @@ const HTML_CONTENT = `<!doctype html>
         border: 1px solid rgba(255, 255, 255, 0.15);
       }
       .glass-modal {
-        background: rgba(18, 18, 20, 0.94);
+        background: rgba(18, 18, 20, 0.95);
         backdrop-filter: blur(25px);
         -webkit-backdrop-filter: blur(25px);
         border: 1px solid rgba(255, 255, 255, 0.18);
@@ -100,47 +150,72 @@ const HTML_CONTENT = `<!doctype html>
         left: 0;
         will-change: transform;
       }
+      /* 星轨背景容器样式 */
+      .star-background {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: -10;
+      }
+      #startrack {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .star-cover {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-image: radial-gradient(rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.8) 100%);
+        pointer-events: none;
+      }
     </style>
   </head>
-  <body class="bg-[#0a0a0a] text-white min-h-screen relative overflow-hidden font-sans flex flex-col justify-between select-none">
+  <body class="bg-[#151515] text-white min-h-screen relative overflow-hidden font-sans flex flex-col justify-between select-none">
     
-    <!-- 3200根炫彩旋转线条 Canvas 背景 -->
-    <canvas id="starCanvas" class="fixed inset-0 -z-10 block pointer-events-none"></canvas>
+    <!-- 经典星轨背景容器 -->
+    <div class="star-background">
+      <canvas id="startrack"></canvas>
+      <div class="star-cover"></div>
+    </div>
 
     <!-- 顶部导航栏 -->
-    <header class="w-full max-w-5xl mx-auto px-6 pt-8 flex justify-between items-center z-10">
-      
-      <!-- 多班级选择下拉框 -->
-      <div class="flex items-center gap-3">
+    <header class="w-full max-w-5xl mx-auto px-6 pt-8 flex flex-wrap justify-between items-center gap-4 z-10">
+      <div class="flex flex-wrap items-center gap-2">
         <span class="text-xl">🎲</span>
-        <select id="classSelect" onchange="switchClass(this.value)" class="glass px-4 py-2 rounded-full text-sm font-bold text-amber-200 bg-black/40 border-amber-300/30 focus:outline-none cursor-pointer">
-          <option value="">正在加载班级...</option>
+        <select id="mainYearSelect" onchange="onMainYearChange(this.value)" class="glass px-3 py-1.5 rounded-full text-xs font-bold text-amber-200 bg-black/40 border-amber-300/30 focus:outline-none cursor-pointer">
+          <option>加载年份...</option>
+        </select>
+        <select id="mainSchoolSelect" onchange="onMainSchoolChange(this.value)" class="glass px-3 py-1.5 rounded-full text-xs font-bold text-amber-200 bg-black/40 border-amber-300/30 focus:outline-none cursor-pointer">
+          <option>加载学校...</option>
+        </select>
+        <select id="mainClassSelect" onchange="onMainClassChange(this.value)" class="glass px-3 py-1.5 rounded-full text-xs font-bold text-amber-200 bg-black/40 border-amber-300/30 focus:outline-none cursor-pointer">
+          <option>加载班级...</option>
         </select>
       </div>
 
-      <button onclick="openModal()" class="glass px-4 py-2 rounded-full text-xs font-medium text-amber-200 hover:bg-white/15 transition duration-200 flex items-center gap-1.5 border-amber-300/30">
-        <span>⚙️</span> 管理班级与名单
+      <!-- 点击后先触发密码验证 -->
+      <button onclick="requestAdminAuth()" class="glass px-4 py-2 rounded-full text-xs font-medium text-amber-200 hover:bg-white/15 transition duration-200 flex items-center gap-1.5 border-amber-300/30">
+        <span>⚙️</span> 管理与编辑名单
       </button>
     </header>
 
     <!-- 中央核心点名区 -->
     <main class="flex-1 flex flex-col items-center justify-center px-4 z-10">
-      <!-- 滚轮视口卡片：固定高度 240px，正好容纳 3 个 80px 高的元素 -->
       <div class="glass slot-box w-full max-w-md h-[240px] rounded-3xl shadow-2xl mb-8 border-white/20">
-        
-        <!-- 上下渐变遮罩：突出中间高亮部分 -->
-        <div class="absolute inset-0 z-10 pointer-events-none bg-gradient-to-b from-[#0a0a0a]/85 via-transparent to-[#0a0a0a]/85"></div>
+        <div class="absolute inset-0 z-10 pointer-events-none bg-gradient-to-b from-[#151515]/85 via-transparent to-[#151515]/85"></div>
 
-        <!-- 滚动列表容器 -->
         <div id="slotWrapper">
           <div class="h-[240px] flex items-center justify-center text-4xl sm:text-5xl font-black text-shimmer">准备就绪</div>
         </div>
-
       </div>
 
       <div id="subStatus" class="text-xs text-white/50 mb-8 tracking-widest font-mono">点击下方按钮开始 4 秒随机抽选</div>
 
-      <!-- 抽签按钮 -->
       <button id="drawBtn" onclick="startDraw()" class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:scale-95 text-white font-bold text-xl px-12 py-4 rounded-full shadow-lg shadow-indigo-500/30 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
         🎯 开始抽签
       </button>
@@ -148,278 +223,507 @@ const HTML_CONTENT = `<!doctype html>
 
     <!-- 页脚 -->
     <footer class="pb-6 text-center text-xs text-white/30 z-10">
-      云端 KV 持久化存储 · 多班级随机抽选
+      高一7班·共68人
     </footer>
 
-    <!-- 多班级与名单管理模态框 -->
+    <!-- 弹窗 1：前置管理员密码验证框 -->
+    <div id="authModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 opacity-0 pointer-events-none transition-opacity duration-300">
+      <div class="glass-modal w-full max-w-sm rounded-3xl p-6 shadow-2xl text-center border-white/20 flex flex-col items-center">
+        <div class="text-3xl mb-2">🔒</div>
+        <h3 class="text-base font-bold text-white mb-2">管理员权限验证</h3>
+        <p class="text-xs text-white/50 mb-4">编辑名单需要管理员身份，请输入密码：</p>
+        
+        <input id="authPasswordInput" type="password" placeholder="请输入管理员密码" class="w-full bg-black/60 border border-white/20 rounded-xl px-4 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-amber-400 mb-4 text-center" onkeydown="if(event.key==='Enter') verifyAdminAuth()" />
+
+        <div class="flex gap-3 w-full">
+          <button onclick="closeAuthModal()" class="flex-1 py-2 rounded-xl bg-white/10 text-white/70 hover:bg-white/20 text-xs font-medium transition">取消</button>
+          <button id="authBtn" onclick="verifyAdminAuth()" class="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs transition">验证并进入</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 2：多层级与名单管理模态框 -->
     <div id="modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 opacity-0 pointer-events-none transition-opacity duration-300">
-      <div class="glass-modal w-full max-w-xl rounded-3xl p-6 shadow-2xl text-left border-white/20 max-h-[90vh] flex flex-col">
+      <div class="glass-modal w-full max-w-2xl rounded-3xl p-6 shadow-2xl text-left border-white/20 max-h-[90vh] flex flex-col">
         
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-lg font-bold text-white flex items-center gap-2">
-            <span>📋</span> 班级与学生名单管理
+            <span>📋</span> 年份 / 学校 / 班级与名单管理
           </h3>
           <button onclick="closeModal()" class="text-white/50 hover:text-white text-xl font-bold">&times;</button>
         </div>
 
-        <div class="flex-1 overflow-y-auto pr-1">
-          <!-- 1. 新建/删除班级 -->
-          <div class="mb-5 bg-white/5 p-4 rounded-2xl border border-white/10">
-            <label class="block text-xs font-semibold text-amber-200 mb-2">切换或新增班级：</label>
-            <div class="flex gap-2 mb-3">
-              <select id="modalClassSelect" onchange="switchModalClass(this.value)" class="flex-1 bg-black/50 border border-white/20 rounded-xl px-3 py-2 text-sm text-white focus:outline-none">
-              </select>
-              <button onclick="deleteCurrentClass()" class="px-3 py-2 bg-rose-600/80 hover:bg-rose-600 text-white rounded-xl text-xs font-medium transition">删除此班级</button>
+        <div class="flex-1 overflow-y-auto pr-1 space-y-4">
+          
+          <!-- 1. 年份管理 -->
+          <div class="bg-white/5 p-3 rounded-2xl border border-white/10">
+            <label class="block text-xs font-semibold text-amber-200 mb-1.5">1. 选择或创建年份：</label>
+            <div class="flex gap-2 mb-2">
+              <select id="modalYearSelect" onchange="onModalYearChange(this.value)" class="flex-1 bg-black/50 border border-white/20 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"></select>
+              <button onclick="deleteCurrentYear()" class="px-3 py-1.5 bg-rose-600/80 hover:bg-rose-600 text-white rounded-xl text-xs transition">删除该年份</button>
             </div>
-            
             <div class="flex gap-2">
-              <input id="newClassNameInput" type="text" placeholder="输入新班级名称（如：高一(3)班）" class="flex-1 bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-indigo-500" />
-              <button onclick="addNewClass()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition">新增班级</button>
+              <input id="newYearInput" type="text" placeholder="新年份名称（如：2026年）" class="flex-1 bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-white/30 focus:outline-none" />
+              <button onclick="addNewYear()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition">新增年份</button>
             </div>
           </div>
 
-          <!-- 2. 编辑当前班级学生名单 -->
-          <div class="mb-2">
-            <label class="block text-xs font-semibold text-amber-200 mb-2">当前班级学生名单（支持换行或逗号分隔）：</label>
-            <textarea id="studentInput" class="w-full h-44 bg-black/50 border border-white/10 rounded-2xl p-4 text-sm text-white placeholder-white/30 focus:outline-none focus:border-indigo-500 resize-none font-mono" placeholder="张三&#10;李四&#10;王五"></textarea>
+          <!-- 2. 学校管理 -->
+          <div class="bg-white/5 p-3 rounded-2xl border border-white/10">
+            <label class="block text-xs font-semibold text-amber-200 mb-1.5">2. 选择或创建学校：</label>
+            <div class="flex gap-2 mb-2">
+              <select id="modalSchoolSelect" onchange="onModalSchoolChange(this.value)" class="flex-1 bg-black/50 border border-white/20 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"></select>
+              <button onclick="deleteCurrentSchool()" class="px-3 py-1.5 bg-rose-600/80 hover:bg-rose-600 text-white rounded-xl text-xs transition">删除该学校</button>
+            </div>
+            <div class="flex gap-2">
+              <input id="newSchoolInput" type="text" placeholder="新学校名称（如：第一中学）" class="flex-1 bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-white/30 focus:outline-none" />
+              <button onclick="addNewSchool()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition">新增学校</button>
+            </div>
+          </div>
+
+          <!-- 3. 班级管理 -->
+          <div class="bg-white/5 p-3 rounded-2xl border border-white/10">
+            <label class="block text-xs font-semibold text-amber-200 mb-1.5">3. 选择或创建班级：</label>
+            <div class="flex gap-2 mb-2">
+              <select id="modalClassSelect" onchange="onModalClassChange(this.value)" class="flex-1 bg-black/50 border border-white/20 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"></select>
+              <button onclick="deleteCurrentClass()" class="px-3 py-1.5 bg-rose-600/80 hover:bg-rose-600 text-white rounded-xl text-xs transition">删除该班级</button>
+            </div>
+            <div class="flex gap-2">
+              <input id="newClassInput" type="text" placeholder="新班级名称（如：高一(3)班）" class="flex-1 bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-white/30 focus:outline-none" />
+              <button onclick="addNewClass()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition">新增班级</button>
+            </div>
+          </div>
+
+          <!-- 4. 学生名单编辑 -->
+          <div>
+            <label class="block text-xs font-semibold text-amber-200 mb-1.5">4. 编辑当前班级学生名单（支持换行或逗号分隔）：</label>
+            <textarea id="studentInput" class="w-full h-32 bg-black/50 border border-white/10 rounded-2xl p-3 text-xs text-white placeholder-white/30 focus:outline-none focus:border-indigo-500 resize-none font-mono" placeholder="张三&#10;李四&#10;王五"></textarea>
           </div>
         </div>
         
         <div class="flex justify-end gap-3 pt-4 border-t border-white/10">
-          <button onclick="closeModal()" class="px-5 py-2.5 rounded-xl bg-white/10 text-white/70 hover:bg-white/20 text-sm font-medium transition">取消</button>
-          <button id="saveBtn" onclick="saveAllToKV()" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold transition flex items-center gap-2">
+          <button onclick="closeModal()" class="px-5 py-2 rounded-xl bg-white/10 text-white/70 hover:bg-white/20 text-xs font-medium transition">取消</button>
+          <button id="saveBtn" onclick="saveAllToKV()" class="px-6 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition flex items-center gap-2">
             <span>💾</span> 保存并同步到云端
           </button>
         </div>
       </div>
     </div>
 
-    <!-- 核心逻辑脚本 -->
+    <!-- 脚本逻辑 -->
     <script>
-      // ---------------- 1. 3200根高密度旋转线条 Canvas ----------------
-      const canvas = document.getElementById('starCanvas');
-      const ctx = canvas.getContext('2d');
-      let lines = [];
-      let globalTime = 0;
+      // ---------------- 1. 经典星轨 Canvas 背景渲染引擎 ----------------
+      (function () {
+        var canvas = document.getElementById("startrack");
+        var ctx = canvas.getContext("2d");
+        var offCanvas = document.createElement("canvas");
+        var offCtx = offCanvas.getContext("2d");
+        var width, height, maxSide;
+        var stars = [];
+        var frameCount = 0;
 
-      function initLines() {
-        lines = [];
-        const LINE_COUNT = 3200; 
-        const maxDiagonal = Math.sqrt(Math.pow(window.innerWidth * 1.8, 2) + Math.pow(window.innerHeight * 1.8, 2));
-
-        for (let i = 0; i < LINE_COUNT; i++) {
-          const radius = 50 + Math.random() * maxDiagonal;
-          const angle = Math.random() * Math.PI * 2;
-          lines.push({
-            angle: angle,
-            radius: radius,
-            length: (0.006 + Math.random() * 0.04) * (800 / radius),
-            hue: Math.random() * 360,
-            alpha: 0.45 + Math.random() * 0.5,
-            speed: (0.00012 + Math.random() * 0.00018) * (1 / (radius / 600)),
-            width: 1.1 + Math.random() * 0.7 
-          });
+        function random(min, max) {
+          return min + Math.round(Math.random() * (max - min));
         }
-      }
 
-      function resize() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        initLines();
-      }
-      window.addEventListener('resize', resize);
-
-      const getCenterX = () => canvas.width * 1.15;
-      const getCenterY = () => canvas.height * -0.18;
-
-      function renderCanvas() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = "#0a0a0a";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        globalTime += 0.00018;
-
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          const startAngle = line.angle + globalTime * line.speed * 60;
-          const endAngle = startAngle + line.length;
-
-          const startX = getCenterX() + Math.cos(startAngle) * line.radius;
-          const startY = getCenterY() + Math.sin(startAngle) * line.radius;
-          const endX = getCenterX() + Math.cos(endAngle) * line.radius;
-          const endY = getCenterY() + Math.sin(endAngle) * line.radius;
-
-          const grad = ctx.createLinearGradient(startX, startY, endX, endY);
-          grad.addColorStop(0, \`hsla(\${line.hue}, 90%, 68%, 0)\`);
-          grad.addColorStop(0.4, \`hsla(\${line.hue}, 90%, 72%, \${line.alpha})\`);
-          grad.addColorStop(1, \`hsla(\${(line.hue + 30) % 360}, 90%, 72%, \${line.alpha * 0.6})\`);
-
-          ctx.beginPath();
-          ctx.strokeStyle = grad;
-          ctx.lineWidth = line.width;
+        function initStars() {
+          width = canvas.width = window.innerWidth;
+          height = canvas.height = window.innerHeight;
+          maxSide = Math.max(width, height);
+          offCanvas.width = 2.6 * maxSide;
+          offCanvas.height = 2.6 * maxSide;
+          ctx.fillStyle = "rgba(21, 21, 21, 1)";
+          ctx.fillRect(0, 0, width, height);
           ctx.lineCap = "round";
-          ctx.moveTo(startX, startY);
-          ctx.lineTo(endX, endY);
-          ctx.stroke();
+          ctx.translate(width, 0);
 
-          line.angle += line.speed;
+          stars = [];
+          for (var i = 20000; i--;) {
+            var r = random(120, 255);
+            var g = random(120, 255);
+            var b = random(120, 255);
+            var a = random(30, 100) / 100;
+            stars.push({
+              x: random(-offCanvas.width, offCanvas.width),
+              y: random(-offCanvas.height, offCanvas.height),
+              size: 1.2,
+              color: "rgba(" + r + "," + g + "," + b + "," + a + ")"
+            });
+          }
+
+          for (var j = stars.length; j--;) {
+            var s = stars[j];
+            offCtx.beginPath();
+            offCtx.arc(s.x, s.y, s.size, 0, 2 * Math.PI, true);
+            offCtx.fillStyle = s.color;
+            offCtx.closePath();
+            offCtx.fill();
+          }
         }
 
-        requestAnimationFrame(renderCanvas);
-      }
+        function drawStars() {
+          ctx.drawImage(offCanvas, -offCanvas.width / 2, -offCanvas.height / 2);
+          frameCount++;
+          if (frameCount > 150 && frameCount % 8 === 0) {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.04)";
+            ctx.fillRect(-3 * maxSide, -3 * maxSide, 6 * maxSide, 6 * maxSide);
+          }
+          ctx.rotate((0.025 * Math.PI) / 180);
+        }
 
-      resize();
-      requestAnimationFrame(renderCanvas);
+        function loopStars() {
+          drawStars();
+          requestAnimationFrame(loopStars);
+        }
 
-      // ---------------- 2. 云端 KV 数据同步与班级管理 ----------------
+        window.addEventListener("resize", function () {
+          width = canvas.width = window.innerWidth;
+          height = canvas.height = window.innerHeight;
+          maxSide = Math.max(width, height);
+          ctx.fillStyle = "rgba(21, 21, 21, 1)";
+          ctx.fillRect(0, 0, width, height);
+          ctx.translate(width, 0);
+        });
+
+        initStars();
+        loopStars();
+      })();
+
+      // ---------------- 2. 数据与全局状态 ----------------
       let appData = {
+        activeYear: "",
+        activeSchool: "",
         activeClass: "",
-        classes: {}
+        data: {}
       };
-      
-      let editingModalClass = ""; // 模态框当前正在编辑的班级
 
-      // 初始化：从 Workers KV 加载班级数据
+      let currentPassToken = ""; // 缓存本次验证通过的密码
+      let editingYear = "";
+      let editingSchool = "";
+      let editingClass = "";
+
       async function loadDataFromKV() {
         try {
           const res = await fetch('/api/get-classes');
           appData = await res.json();
-          renderClassSelectors();
+          sanitizeSelections();
+          renderMainSelectors();
           updateMainDisplay();
         } catch(e) {
           console.error("加载云端 KV 失败", e);
         }
       }
 
-      function renderClassSelectors() {
-        const classNames = Object.keys(appData.classes);
-        if (classNames.length === 0) return;
+      function sanitizeSelections() {
+        if (!appData.data || Object.keys(appData.data).length === 0) {
+          appData.data = { "2026年": { "实验中学": { "高一(1)班": [] } } };
+        }
+        const years = Object.keys(appData.data);
+        if (!years.includes(appData.activeYear)) appData.activeYear = years[0];
 
-        if (!appData.activeClass || !appData.classes[appData.activeClass]) {
-          appData.activeClass = classNames[0];
+        const schools = Object.keys(appData.data[appData.activeYear] || {});
+        if (!schools.includes(appData.activeSchool)) appData.activeSchool = schools[0] || "";
+
+        const classes = Object.keys(appData.data[appData.activeYear]?.[appData.activeSchool] || {});
+        if (!classes.includes(appData.activeClass)) appData.activeClass = classes[0] || "";
+      }
+
+      function renderMainSelectors() {
+        sanitizeSelections();
+        const years = Object.keys(appData.data);
+        const schools = Object.keys(appData.data[appData.activeYear] || {});
+        const classes = Object.keys(appData.data[appData.activeYear]?.[appData.activeSchool] || {});
+
+        document.getElementById('mainYearSelect').innerHTML = years.map(y => 
+          \`<option value="\${y}" \${y === appData.activeYear ? 'selected' : ''}>\${y}</option>\`
+        ).join('');
+
+        document.getElementById('mainSchoolSelect').innerHTML = schools.map(s => 
+          \`<option value="\${s}" \${s === appData.activeSchool ? 'selected' : ''}>\${s}</option>\`
+        ).join('');
+
+        document.getElementById('mainClassSelect').innerHTML = classes.map(c => 
+          \`<option value="\${c}" \${c === appData.activeClass ? 'selected' : ''}>\${c}</option>\`
+        ).join('');
+      }
+
+      function onMainYearChange(val) {
+        appData.activeYear = val;
+        const schools = Object.keys(appData.data[val] || {});
+        appData.activeSchool = schools[0] || "";
+        const classes = Object.keys(appData.data[val]?.[appData.activeSchool] || {});
+        appData.activeClass = classes[0] || "";
+        renderMainSelectors();
+        updateMainDisplay();
+      }
+
+      function onMainSchoolChange(val) {
+        appData.activeSchool = val;
+        const classes = Object.keys(appData.data[appData.activeYear]?.[val] || {});
+        appData.activeClass = classes[0] || "";
+        renderMainSelectors();
+        updateMainDisplay();
+      }
+
+      function onMainClassChange(val) {
+        appData.activeClass = val;
+        updateMainDisplay();
+      }
+
+      function getActiveStudentList() {
+        return appData.data?.[appData.activeYear]?.[appData.activeSchool]?.[appData.activeClass] || [];
+      }
+
+      function updateMainDisplay() {
+        const list = getActiveStudentList();
+        const slotWrapper = document.getElementById('slotWrapper');
+        slotWrapper.style.transition = 'none';
+        slotWrapper.style.transform = 'translateY(0px)';
+        slotWrapper.innerHTML = \`<div class="h-[240px] flex items-center justify-center text-4xl sm:text-5xl font-black text-shimmer">\${list.length > 0 ? "准备就绪" : "无学生名单"}</div>\`;
+
+        document.getElementById('subStatus').innerText = \`当前：\${appData.activeYear} · \${appData.activeSchool} · \${appData.activeClass}（共 \${list.length} 人）\`;
+        document.getElementById('drawBtn').innerText = "🎯 开始抽签";
+      }
+
+      // ---------------- 3. 前置密码校验逻辑 ----------------
+      function requestAdminAuth() {
+        if (currentPassToken) {
+          openModal();
+          return;
+        }
+        const authModal = document.getElementById('authModal');
+        document.getElementById('authPasswordInput').value = "";
+        authModal.classList.remove('opacity-0', 'pointer-events-none');
+        authModal.classList.add('opacity-100');
+        setTimeout(() => document.getElementById('authPasswordInput').focus(), 100);
+      }
+
+      function closeAuthModal() {
+        const authModal = document.getElementById('authModal');
+        authModal.classList.remove('opacity-100');
+        authModal.classList.add('opacity-0', 'pointer-events-none');
+      }
+
+      async function verifyAdminAuth() {
+        const passInput = document.getElementById('authPasswordInput');
+        const pass = passInput.value.trim();
+        if (!pass) {
+          alert("请输入密码！");
+          return;
         }
 
-        // 首页选择框
-        const select = document.getElementById('classSelect');
-        select.innerHTML = classNames.map(name => 
-          \`<option value="\${name}" \${name === appData.activeClass ? 'selected' : ''}>\${name}</option>\`
-        ).join('');
+        const authBtn = document.getElementById('authBtn');
+        authBtn.innerText = "验证中...";
+        authBtn.disabled = true;
 
-        // 弹窗选择框
-        editingModalClass = appData.activeClass;
-        renderModalClassSelect();
+        try {
+          const res = await fetch('/api/verify-pass', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pass })
+          });
+          
+          if (res.ok) {
+            currentPassToken = pass;
+            closeAuthModal();
+            openModal();
+          } else {
+            alert("密码错误！无法进行管理。");
+          }
+        } catch(e) {
+          alert("网络错误，验证失败！");
+        } finally {
+          authBtn.innerText = "验证并进入";
+          authBtn.disabled = false;
+        }
       }
 
-      function renderModalClassSelect() {
-        const classNames = Object.keys(appData.classes);
-        const modalSelect = document.getElementById('modalClassSelect');
-        modalSelect.innerHTML = classNames.map(name => 
-          \`<option value="\${name}" \${name === editingModalClass ? 'selected' : ''}>\${name}</option>\`
-        ).join('');
+      // ---------------- 4. 模态框管理逻辑 ----------------
+      function openModal() {
+        editingYear = appData.activeYear;
+        editingSchool = appData.activeSchool;
+        editingClass = appData.activeClass;
+        
+        renderModalSelectors();
 
-        const studentInput = document.getElementById('studentInput');
-        const list = appData.classes[editingModalClass] || [];
-        studentInput.value = list.join('\\n');
+        const modal = document.getElementById('modal');
+        modal.classList.remove('opacity-0', 'pointer-events-none');
+        modal.classList.add('opacity-100');
       }
 
-      function switchClass(className) {
-        if (!className || !appData.classes[className]) return;
-        appData.activeClass = className;
-        updateMainDisplay();
-        // 保存当前选中的班级状态
-        saveAllToKV(false);
+      function closeModal() {
+        const modal = document.getElementById('modal');
+        modal.classList.remove('opacity-100');
+        modal.classList.add('opacity-0', 'pointer-events-none');
       }
 
-      function switchModalClass(className) {
-        // 先暂存当前正在输入的文本
-        saveCurrentInputToMemory();
-        editingModalClass = className;
-        renderModalClassSelect();
-      }
-
-      function saveCurrentInputToMemory() {
-        if (!editingModalClass) return;
+      function saveModalTextareaToMemory() {
+        if (!editingYear || !editingSchool || !editingClass) return;
         const text = document.getElementById('studentInput').value.trim();
         const list = text ? text.split(/[\\n,，、]/).map(s => s.trim()).filter(s => s.length > 0) : [];
-        appData.classes[editingModalClass] = list;
+        if (!appData.data[editingYear]) appData.data[editingYear] = {};
+        if (!appData.data[editingYear][editingSchool]) appData.data[editingYear][editingSchool] = {};
+        appData.data[editingYear][editingSchool][editingClass] = list;
+      }
+
+      function sanitizeEditingSelections() {
+        const years = Object.keys(appData.data);
+        if (!years.includes(editingYear)) editingYear = years[0] || "";
+        
+        const schools = Object.keys(appData.data[editingYear] || {});
+        if (!schools.includes(editingSchool)) editingSchool = schools[0] || "";
+
+        const classes = Object.keys(appData.data[editingYear]?.[editingSchool] || {});
+        if (!classes.includes(editingClass)) editingClass = classes[0] || "";
+      }
+
+      function renderModalSelectors() {
+        sanitizeEditingSelections();
+
+        const years = Object.keys(appData.data);
+        const schools = Object.keys(appData.data[editingYear] || {});
+        const classes = Object.keys(appData.data[editingYear]?.[editingSchool] || {});
+
+        document.getElementById('modalYearSelect').innerHTML = years.map(y => 
+          \`<option value="\${y}" \${y === editingYear ? 'selected' : ''}>\${y}</option>\`
+        ).join('');
+
+        document.getElementById('modalSchoolSelect').innerHTML = schools.map(s => 
+          \`<option value="\${s}" \${s === editingSchool ? 'selected' : ''}>\${s}</option>\`
+        ).join('');
+
+        document.getElementById('modalClassSelect').innerHTML = classes.map(c => 
+          \`<option value="\${c}" \${c === editingClass ? 'selected' : ''}>\${c}</option>\`
+        ).join('');
+
+        const currentList = appData.data?.[editingYear]?.[editingSchool]?.[editingClass] || [];
+        document.getElementById('studentInput').value = currentList.join('\\n');
+      }
+
+      function onModalYearChange(val) {
+        saveModalTextareaToMemory();
+        editingYear = val;
+        editingSchool = Object.keys(appData.data[val] || {})[0] || "";
+        editingClass = Object.keys(appData.data[val]?.[editingSchool] || {})[0] || "";
+        renderModalSelectors();
+      }
+
+      function onModalSchoolChange(val) {
+        saveModalTextareaToMemory();
+        editingSchool = val;
+        editingClass = Object.keys(appData.data[editingYear]?.[val] || {})[0] || "";
+        renderModalSelectors();
+      }
+
+      function onModalClassChange(val) {
+        saveModalTextareaToMemory();
+        editingClass = val;
+        renderModalSelectors();
+      }
+
+      function addNewYear() {
+        saveModalTextareaToMemory();
+        const input = document.getElementById('newYearInput');
+        const val = input.value.trim();
+        if (!val) return alert("请输入年份名称！");
+        if (appData.data[val]) return alert("该年份已存在！");
+        appData.data[val] = { "默认学校": { "高一(1)班": [] } };
+        editingYear = val;
+        editingSchool = "默认学校";
+        editingClass = "高一(1)班";
+        input.value = "";
+        renderModalSelectors();
+      }
+
+      function deleteCurrentYear() {
+        if (Object.keys(appData.data).length <= 1) return alert("至少保留一个年份！");
+        if (confirm(\`确定要删除 "\${editingYear}" 及其下所有学校和班级吗？\`)) {
+          delete appData.data[editingYear];
+          renderModalSelectors();
+        }
+      }
+
+      function addNewSchool() {
+        saveModalTextareaToMemory();
+        const input = document.getElementById('newSchoolInput');
+        const val = input.value.trim();
+        if (!val) return alert("请输入学校名称！");
+        if (appData.data[editingYear][val]) return alert("该学校在当前年份已存在！");
+        appData.data[editingYear][val] = { "高一(1)班": [] };
+        editingSchool = val;
+        editingClass = "高一(1)班";
+        input.value = "";
+        renderModalSelectors();
+      }
+
+      function deleteCurrentSchool() {
+        if (Object.keys(appData.data[editingYear]).length <= 1) return alert("当前年份下至少保留一个学校！");
+        if (confirm(\`确定要删除 "\${editingSchool}" 及其下所有班级吗？\`)) {
+          delete appData.data[editingYear][editingSchool];
+          renderModalSelectors();
+        }
       }
 
       function addNewClass() {
-        saveCurrentInputToMemory();
-        const input = document.getElementById('newClassNameInput');
-        const name = input.value.trim();
-        if (!name) {
-          alert("请输入新班级名称！");
-          return;
-        }
-        if (appData.classes[name]) {
-          alert("该班级名称已存在！");
-          return;
-        }
-        appData.classes[name] = [];
-        appData.activeClass = name;
-        editingModalClass = name;
+        saveModalTextareaToMemory();
+        const input = document.getElementById('newClassInput');
+        const val = input.value.trim();
+        if (!val) return alert("请输入班级名称！");
+        if (appData.data[editingYear][editingSchool][val]) return alert("该班级在此学校已存在！");
+        appData.data[editingYear][editingSchool][val] = [];
+        editingClass = val;
         input.value = "";
-        renderClassSelectors();
+        renderModalSelectors();
       }
 
       function deleteCurrentClass() {
-        const classNames = Object.keys(appData.classes);
-        if (classNames.length <= 1) {
-          alert("至少保留一个班级！");
-          return;
-        }
-        if (confirm(\`确定要删除 "\${editingModalClass}" 吗？\`)) {
-          delete appData.classes[editingModalClass];
-          appData.activeClass = Object.keys(appData.classes)[0];
-          editingModalClass = appData.activeClass;
-          renderClassSelectors();
+        if (Object.keys(appData.data[editingYear][editingSchool]).length <= 1) return alert("当前学校下至少保留一个班级！");
+        if (confirm(\`确定要删除 "\${editingClass}" 吗？\`)) {
+          delete appData.data[editingYear][editingSchool][editingClass];
+          renderModalSelectors();
         }
       }
 
-      async function saveAllToKV(closeModalAfter = true) {
-        saveCurrentInputToMemory();
-        
+      async function saveAllToKV() {
+        saveModalTextareaToMemory();
+
         const saveBtn = document.getElementById('saveBtn');
         saveBtn.innerText = "⏳ 保存中...";
         saveBtn.disabled = true;
 
         try {
-          await fetch('/api/save-classes', {
+          const res = await fetch('/api/save-classes', {
             method: 'POST',
-            body: JSON.stringify(appData)
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: currentPassToken, data: appData })
           });
-          renderClassSelectors();
-          updateMainDisplay();
-          if (closeModalAfter) closeModal();
+
+          const result = await res.json();
+          if (res.ok && result.success) {
+            alert("保存并成功同步至云端！");
+            renderMainSelectors();
+            updateMainDisplay();
+            closeModal();
+          } else {
+            alert(result.error || "保存失败，请重新输入密码！");
+            currentPassToken = ""; 
+          }
         } catch(e) {
-          alert("保存到云端失败，请重试！");
+          alert("保存到云端失败，请检查网络！");
         } finally {
           saveBtn.innerText = "💾 保存并同步到云端";
           saveBtn.disabled = false;
         }
       }
 
-      function updateMainDisplay() {
-        const list = appData.classes[appData.activeClass] || [];
-        const slotWrapper = document.getElementById('slotWrapper');
-        slotWrapper.style.transition = 'none';
-        slotWrapper.style.transform = 'translateY(0px)';
-        slotWrapper.innerHTML = \`<div class="h-[240px] flex items-center justify-center text-4xl sm:text-5xl font-black text-shimmer">\${list.length > 0 ? "准备就绪" : "请先导入学生"}</div>\`;
-
-        document.getElementById('subStatus').innerText = \`当前：\${appData.activeClass}（共 \${list.length} 人）\`;
-        document.getElementById('drawBtn').innerText = "🎯 开始抽签";
-      }
-
-      // ---------------- 3. 老虎机视口重构（真正平滑居中+高亮放大+下方后续名字） ----------------
+      // ---------------- 5. 抽选逻辑 ----------------
       let isSpinning = false;
 
       function startDraw() {
         if (isSpinning) return;
-        const currentList = appData.classes[appData.activeClass] || [];
+        const currentList = getActiveStudentList();
         if (currentList.length === 0) {
-          alert("当前班级没有学生，请先点击右上角管理并添加学生！");
-          openModal();
+          alert("当前班级没有学生，请先联系管理员添加学生！");
           return;
         }
 
@@ -431,73 +735,43 @@ const HTML_CONTENT = `<!doctype html>
         drawBtn.disabled = true;
         subStatus.innerText = "🎲 正在纵向滚动抽选...";
 
-        // 1. 随机选出中选学生
         const winnerIndex = Math.floor(Math.random() * currentList.length);
         const winnerName = currentList[winnerIndex];
 
-        // 2. 构造长滚动列表：确保 winnerName 在中间偏后，且其下方继续拼接完整的学生循环！
-        const itemHeight = 80; // 每个名字占用 80px 高度
+        const itemHeight = 80;
         let scrollSequence = [];
         
-        // 前置滚动段：重复拼入约 60 个名字，保证 4 秒高速滚动的质感
         const minPrefix = 60;
         while (scrollSequence.length < minPrefix) {
           scrollSequence = scrollSequence.concat(currentList);
         }
 
-        // 关键重构点：把 winnerName 放中间，下方继续追加至少 10 个名字，保证下方不空白！
-        const winnerPosIndex = scrollSequence.length; // winner 在序列中的索引
+        const winnerPosIndex = scrollSequence.length;
         scrollSequence.push(winnerName);
-
-        // 在 winnerName 下方追加后续学生名单（循环2次）
         scrollSequence = scrollSequence.concat(currentList).concat(currentList);
 
-        // 3. 渲染 DOM
         slotWrapper.innerHTML = scrollSequence.map((name, idx) => {
           const isWinner = idx === winnerPosIndex;
           return \`<div class="h-[80px] flex items-center justify-center text-4xl sm:text-5xl tracking-wider transition-all duration-300 \${isWinner ? 'winner-target font-black text-shimmer scale-125' : 'text-white/40 font-semibold'}" style="height: \${itemHeight}px;">\${name}</div>\`;
         }).join('');
 
-        // 4. 重置 Transform
         slotWrapper.style.transition = 'none';
         slotWrapper.style.transform = 'translateY(0px)';
-        slotWrapper.offsetHeight; // 强制重绘
+        slotWrapper.offsetHeight;
 
-        // 5. 精确计算平移位置：
-        // 容器高度 240px，居中目标线为 Y = 80px 处（第 2 个 80px 区域）。
-        // 索引为 winnerPosIndex 的元素，在 wrapper 中的原始 Top = winnerPosIndex * 80px。
-        // 要让它正好停在容器的 80px 处，wrapper 向上平移距离 = (winnerPosIndex - 1) * 80px。
         const targetTranslateY = -((winnerPosIndex - 1) * itemHeight);
-
-        // 6. 4 秒（4000ms）自然减速
         const duration = 4000;
         slotWrapper.style.transition = \`transform \${duration}ms cubic-bezier(0.08, 0.82, 0.18, 1)\`;
         slotWrapper.style.transform = \`translateY(\${targetTranslateY}px)\`;
 
-        // 7. 4 秒停止后的高亮效果
         setTimeout(() => {
-          subStatus.innerText = \`🎉 恭喜 \${appData.activeClass} 的 \${winnerName} 同学！\`;
+          subStatus.innerText = \`🎉 恭喜 \${appData.activeYear} \${appData.activeSchool} \${appData.activeClass} 的 \${winnerName} 同学！\`;
           drawBtn.disabled = false;
           drawBtn.innerText = "🎲 再抽一位";
           isSpinning = false;
         }, duration);
       }
 
-      // ---------------- 4. 弹窗控制 ----------------
-      function openModal() {
-        const modal = document.getElementById('modal');
-        renderClassSelectors();
-        modal.classList.remove('opacity-0', 'pointer-events-none');
-        modal.classList.add('opacity-100');
-      }
-
-      function closeModal() {
-        const modal = document.getElementById('modal');
-        modal.classList.remove('opacity-100');
-        modal.classList.add('opacity-0', 'pointer-events-none');
-      }
-
-      // 页面加载入口
       window.onload = loadDataFromKV;
     </script>
   </body>
