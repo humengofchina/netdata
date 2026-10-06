@@ -1,7 +1,7 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const ADMIN_PASSWORD = env.ADMIN_PASSWORD || " ";
+    const ADMIN_PASSWORD = env.ADMIN_PASSWORD || "  在这里设置密码  ";
 
     // 1. 静态主页
     if (request.method === "GET" && url.pathname === "/") {
@@ -18,16 +18,56 @@ export default {
       const urgentStr = await env.LEAVE_KV.get("urgent_broadcast");
       const urgent = urgentStr ? JSON.parse(urgentStr) : null;
       
-      // 默认周一到周五排班模板 (1: 周一 ... 5: 周五)
+      // 默认周一到周五排班模板 (65人已分配，4人另行安排，卫生区全男生)
       const defaultWeeklyDuty = {
-        1: { sweeping: "高林旭、王明哲、王涵乐、张景豪", mopping: "孙敏浩、王耀康、王翔宇", blackboard: "查寅诚、杨双亮", outdoor: "杨绍博、李赫哲、华梦涛、王子轩" },
-        2: { sweeping: "李书研、许科航、文俊豪、魏家旺", mopping: "李佳坤、栾家乐、母高博", blackboard: "苏军豪、乔宇辰", outdoor: "王哲轩、刘帅豪、许秉坤、李彤珈" },
-        3: { sweeping: "李沐洋、支琼瑶、张盼盼、付思恩", mopping: "苏雅琪、姜思涵、张慧莹", blackboard: "史雅欣、张畅畅", outdoor: "康馨予、王静怡、任静茹、杨梦圆" },
-        4: { sweeping: "郭馨雨、吴梦瑶、王婧祎、陈梦霏", mopping: "胡梓钥、刘雅婷、张静蕾", blackboard: "王妙彤、张一珂", outdoor: "雷岚岚、王含钰、苗林林、朱紫晗" },
-        5: { sweeping: "付政豪、苏世博、任科旭、高博望", mopping: "董振鹏、喻昶沣、付诗博", blackboard: "郭施昂、赵家欣", outdoor: "刘苒苒、雷雨馨、李一诺、单孟晴、刘恩阳、王易涵、张书珂、位佳轩" }
+        1: {
+          sweeping: "李彤珈",
+          mopping: "李沐洋",
+          blackboard: "支琼瑶",
+          windows: "张盼盼",
+          water: "付诗博",
+          trash: "付思恩、苏雅琪",
+          outdoor: "高林旭、王明哲、王涵乐、张景豪、孙敏浩、王耀康"
+        },
+        2: {
+          sweeping: "姜思涵",
+          mopping: "张慧莹",
+          blackboard: "史雅欣",
+          windows: "张畅畅",
+          water: "郭施昂",
+          trash: "康馨予、王静怡",
+          outdoor: "王翔宇、查寅诚、杨双亮、杨绍博、李赫哲、华梦涛"
+        },
+        3: {
+          sweeping: "任静茹",
+          mopping: "杨梦圆",
+          blackboard: "郭馨雨",
+          windows: "吴梦瑶",
+          water: "刘恩阳",
+          trash: "王婧祎、陈梦霏",
+          outdoor: "王子轩、李书研、许科航、魏家旺、李佳坤"
+        },
+        4: {
+          sweeping: "胡梓钥",
+          mopping: "张静蕾",
+          blackboard: "王妙彤",
+          windows: "张一珂",
+          water: "雷岚岚",
+          trash: "王含钰、苗林林",
+          outdoor: "栾家乐、母高博、苏军豪、乔宇辰、王哲轩、刘帅豪"
+        },
+        5: {
+          sweeping: "朱紫晗",
+          mopping: "赵家欣",
+          blackboard: "雷雨馨",
+          windows: "李一诺",
+          water: "位佳轩",
+          trash: "单孟晴、张书珂",
+          outdoor: "付政豪、苏世博、任科旭、高博望、董振鹏、喻昶沣"
+        }
       };
 
-      const dutyStr = await env.LEAVE_KV.get("weekly_duty_schedule_v5");
+      const dutyStr = await env.LEAVE_KV.get("weekly_duty_schedule_v6");
       const weeklyDuty = dutyStr ? JSON.parse(dutyStr) : defaultWeeklyDuty;
 
       return new Response(JSON.stringify({ records, slides, notice, urgent, weeklyDuty }), {
@@ -38,20 +78,23 @@ export default {
     // 2.1 更新某一天的值日排班 (需密码，仅限周一到周五)
     if (request.method === "POST" && url.pathname === "/api/duty/update") {
       try {
-        const { dayOfWeek, sweeping, mopping, blackboard, outdoor, password } = await request.json();
+        const { dayOfWeek, sweeping, mopping, blackboard, windows, water, trash, outdoor, password } = await request.json();
         if (password !== ADMIN_PASSWORD) return jsonRes({ error: "管理员密码错误！" }, 403);
 
-        const dutyStr = await env.LEAVE_KV.get("weekly_duty_schedule_v5");
+        const dutyStr = await env.LEAVE_KV.get("weekly_duty_schedule_v6");
         let weeklyDuty = dutyStr ? JSON.parse(dutyStr) : {};
 
         weeklyDuty[dayOfWeek] = {
           sweeping: (sweeping || "").trim(),
           mopping: (mopping || "").trim(),
           blackboard: (blackboard || "").trim(),
+          windows: (windows || "").trim(),
+          water: (water || "").trim(),
+          trash: (trash || "").trim(),
           outdoor: (outdoor || "").trim()
         };
 
-        await env.LEAVE_KV.put("weekly_duty_schedule_v5", JSON.stringify(weeklyDuty));
+        await env.LEAVE_KV.put("weekly_duty_schedule_v6", JSON.stringify(weeklyDuty));
         return jsonRes({ success: true, message: "该日值日排班已成功保存！" });
       } catch (err) {
         return jsonRes({ error: err.message }, 500);
@@ -93,7 +136,7 @@ export default {
       }
     }
 
-    // 3. 严格锁定中国天气网 (www.weather.com.cn) 河南省周口市商水县专属代码: 101181406
+    // 3. 河南省周口市商水县专属天气代码: 101181406
     if (request.method === "GET" && url.pathname === "/api/weather") {
       try {
         const cacheKey = "shangshui_weather_cma_101181406_v12";
@@ -208,7 +251,7 @@ export default {
       }
     }
 
-    // 5. 上传轮播图 (需密码，12小时过期：43200秒)
+    // 5. 上传轮播图 (需密码)
     if (request.method === "POST" && url.pathname === "/api/slides/upload") {
       try {
         const { imageBase64, note, password } = await request.json();
@@ -231,7 +274,7 @@ export default {
       }
     }
 
-    // 6. 更新图注 (需密码，12小时过期：43200秒)
+    // 6. 更新图注 (需密码)
     if (request.method === "POST" && url.pathname === "/api/slides/update-note") {
       try {
         const { slideId, note, password } = await request.json();
@@ -245,7 +288,7 @@ export default {
       }
     }
 
-    // 7. 删除图片 (需密码，12小时过期：43200秒)
+    // 7. 删除图片 (需密码)
     if (request.method === "POST" && url.pathname === "/api/slides/delete") {
       try {
         const { slideId, password } = await request.json();
@@ -382,7 +425,7 @@ function renderHTML() {
       gap: 14px;
     }
 
-    /* 1. 走马灯横幅样式 (醒目大字慢速滚动) */
+    /* 1. 走马灯横幅样式 (班级公告) */
     .marquee-banner {
       background: #fef2f2;
       border: 1.5px solid #fca5a5;
@@ -436,94 +479,95 @@ function renderHTML() {
       100% { transform: translateX(-100%); }
     }
 
-    /* 2. 今日卫生值日表横栏 (解决长名单遮挡溢出) */
+    /* 2. 今日卫生值日表横栏 (右向左平滑慢速滚动，速度比公告更慢) */
     .duty-banner {
-      background: #ffffff;
+      background: #eff6ff;
       border: 1.5px solid #bfdbfe;
       border-left: 6px solid #2563eb;
       border-radius: 8px;
-      padding: 8px 14px;
+      padding: 10px 16px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      overflow: hidden;
       box-shadow: 0 2px 6px rgba(37, 99, 235, 0.08);
     }
     .duty-title-badge {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      font-size: 14.5px;
+      gap: 6px;
+      font-size: 17px;
       font-weight: 800;
       color: #1e40af;
       background: #dbeafe;
-      padding: 6px 12px;
+      border: 1px solid #bfdbfe;
+      padding: 5px 14px;
       border-radius: 6px;
       white-space: nowrap;
+      margin-right: 16px;
       flex-shrink: 0;
+      z-index: 2;
+      letter-spacing: 0.6px;
     }
-    .duty-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 10px;
+    .duty-content-box {
       flex: 1;
-      min-width: 0;
-    }
-    .duty-card {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      padding: 4px 8px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
       overflow: hidden;
-      min-width: 0;
+      white-space: nowrap;
       position: relative;
+    }
+    .duty-marquee-track {
+      display: inline-block;
+      white-space: nowrap;
+      padding-left: 100%;
+      /* 设定140秒，比公告的100秒更慢、更平稳易读 */
+      animation: duty-marquee-scroll 60s linear infinite;
+      font-size: 20px;
+      font-weight: 700;
+      color: #1e3a8a;
+      line-height: 1.35;
+    }
+    .duty-banner:hover .duty-marquee-track {
+      animation-play-state: paused;
+    }
+    @keyframes duty-marquee-scroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-100%); }
+    }
+
+    /* 值日岗位标签与分隔符 */
+    .duty-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      vertical-align: middle;
     }
     .duty-tag {
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 800;
-      padding: 3px 6px;
+      padding: 2px 8px;
       border-radius: 4px;
       white-space: nowrap;
-      flex-shrink: 0;
     }
-    .tag-sweep { background: #fee2e2; color: #b91c1c; }
-    .tag-mop { background: #e0e7ff; color: #4338ca; }
-    .tag-board { background: #fef3c7; color: #b45309; }
-    .tag-outdoor { background: #dcfce7; color: #15803d; }
-
-    /* 内部名字滚动容器，保证名单再长也能在小格子里完整阅览 */
-    .duty-marquee-wrap {
-      flex: 1;
-      overflow: hidden;
-      white-space: nowrap;
-      position: relative;
-      mask-image: linear-gradient(to right, transparent, black 8px, black calc(100% - 8px), transparent);
-      -webkit-mask-image: linear-gradient(to right, transparent, black 8px, black calc(100% - 8px), transparent);
-    }
-    .duty-names-track {
-      display: inline-block;
-      font-size: 14px;
+    .duty-person {
+      font-size: 19px;
       font-weight: 700;
-      color: #1e293b;
-      white-space: nowrap;
+      color: #0f172a;
     }
-    /* 超长文字激活微滚动 */
-    .duty-marquee-wrap.scroll .duty-names-track {
-      padding-left: 20px;
-      animation: duty-marquee 16s linear infinite alternate;
-    }
-    .duty-card:hover .duty-names-track {
-      animation-play-state: paused !important;
-    }
-    @keyframes duty-marquee {
-      0% { transform: translateX(0); }
-      100% { transform: translateX(calc(-100% + 180px)); }
+    .tag-sweep { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+    .tag-mop { background: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe; }
+    .tag-board { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+    .tag-window { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+    .tag-water { background: #ccfbf1; color: #0f766e; border: 1px solid #99f6e4; }
+    .tag-trash { background: #f3e8ff; color: #7e22ce; border: 1px solid #e9d5ff; }
+    .tag-outdoor { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+    .duty-sep {
+      color: #94a3b8;
+      margin: 0 14px;
+      font-weight: 400;
+      font-size: 18px;
     }
 
     .duty-edit-btn {
-      background: #eff6ff;
+      background: #ffffff;
       border: 1px solid #bfdbfe;
       color: #1e40af;
       font-size: 12px;
@@ -534,6 +578,8 @@ function renderHTML() {
       white-space: nowrap;
       transition: all 0.2s;
       flex-shrink: 0;
+      margin-left: 14px;
+      z-index: 2;
     }
     .duty-edit-btn:hover {
       background: #2563eb;
@@ -827,7 +873,7 @@ function renderHTML() {
     .form-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; }
     .form-group input, .form-group select { width: 100%; padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; }
 
-    /* 全屏紧急通报遮罩层 */
+    /* 全屏重要通知遮罩层 */
     .urgent-fullscreen-overlay {
       position: fixed;
       inset: 0;
@@ -904,8 +950,8 @@ function renderHTML() {
 <body>
   <!-- 全屏紧急通告大屏覆盖层 -->
   <div class="urgent-fullscreen-overlay" id="urgentOverlay">
-    <div class="urgent-header-tag"> 班级重要通知 </div>
-    <div class="urgent-body-text" id="urgentText">正在加载紧急通报...</div>
+    <div class="urgent-header-tag">班级重要通知</div>
+    <div class="urgent-body-text" id="urgentText">正在加载重要通知...</div>
     <div class="urgent-time-bar" id="urgentMeta">班主任远程广播下发</div>
     <button class="urgent-dismiss-btn" onclick="dismissUrgentOverlay()">我已知晓（临时关闭大屏遮罩）</button>
   </div>
@@ -919,34 +965,11 @@ function renderHTML() {
       </div>
     </div>
 
-    <!-- 2. 今日卫生值日表横栏 (周一至周五自适应微跑马灯展示，保证长名单完整可见) -->
+    <!-- 2. 今日卫生值日表流动横幅 (由右向左慢速平滑滚动) -->
     <div class="duty-banner">
       <div class="duty-title-badge" id="dutyDayTitle">🧹 今日值日生</div>
-      <div class="duty-grid">
-        <div class="duty-card" id="dutyCardSweep">
-          <span class="duty-tag tag-sweep">班内扫地</span>
-          <div class="duty-marquee-wrap" id="wrapSweep">
-            <span class="duty-names-track" id="dutySweeping">加载中...</span>
-          </div>
-        </div>
-        <div class="duty-card" id="dutyCardMop">
-          <span class="duty-tag tag-mop">拖地</span>
-          <div class="duty-marquee-wrap" id="wrapMop">
-            <span class="duty-names-track" id="dutyMopping">加载中...</span>
-          </div>
-        </div>
-        <div class="duty-card" id="dutyCardBoard">
-          <span class="duty-tag tag-board">擦墙黑板</span>
-          <div class="duty-marquee-wrap" id="wrapBoard">
-            <span class="duty-names-track" id="dutyBoard">加载中...</span>
-          </div>
-        </div>
-        <div class="duty-card" id="dutyCardOutdoor">
-          <span class="duty-tag tag-outdoor">班外卫生区</span>
-          <div class="duty-marquee-wrap" id="wrapOutdoor">
-            <span class="duty-names-track" id="dutyOutdoor">加载中...</span>
-          </div>
-        </div>
+      <div class="duty-content-box">
+        <div class="duty-marquee-track" id="dutyMarqueeTrack">加载今日排班数据中...</div>
       </div>
       <button class="duty-edit-btn" onclick="openDutyModal()">✏️ 排班设置</button>
     </div>
@@ -1083,13 +1106,13 @@ function renderHTML() {
 
     <!-- 页脚：高一7班莘莘学子 (69人) -->
     <div class="students-footer">
-      <div class="students-title">🎓 高一7班 · 共 69 人</div>
+      <div class="students-title">🎓 高一7班 · 共 68 人</div>
       <div class="students-grid" id="studentsContainer"></div>
     </div>
 
     <!-- 底部跳转外链条目 -->
     <div class="footer-links-wrap">
-      <a class="footer-link" href="https://github.com/humengofchina/data/blob/main/%E7%8F%AD%E7%BA%A7%E4%B8%BB%E9%A1%B5.js" target="_blank" rel="noopener noreferrer">
+      <a class="footer-link" href="https://github.com/humengofchina/netdata" target="_blank" rel="noopener noreferrer">
         开放源代码 ↗
       </a>
       <a class="footer-link" href="https://name.aihuihui.de5.net/" target="_blank" rel="noopener noreferrer">
@@ -1098,13 +1121,16 @@ function renderHTML() {
       <a class="footer-link" href="https://location.aihuihui.de5.net/" target="_blank" rel="noopener noreferrer">
         高一7班座次表 ↗
       </a>
-      <a class="footer-link" href="https://www.deepseek.com/" target="_blank" rel="noopener noreferrer">
-        杭州深度求索-DeepSeek ↗
+      <a class="footer-link" href="https://exam.aihuihui.de5.net/" target="_blank" rel="noopener noreferrer">
+        高一7班成绩统计与分析 ↗
       </a>
-      <a class="footer-link" href="https://wenxin.baidu.com/" target="_blank" rel="noopener noreferrer">
-        百度-文心一言 ↗
+      <a class="footer-link" href="https://www.kimi.com/" target="_blank" rel="noopener noreferrer">
+        北京月之暗面Moonshot AI Kimi ↗
       </a>
-      <a class="footer-link" href="https://haeea.cn/" target="_blank" rel="noopener noreferrer">
+      <a class="footer-link" href="https://gaokao.chsi.com.cn/" target="_blank" rel="noopener noreferrer">
+        阳光高考 ↗
+      </a>
+      <a class="footer-link" href="https://www.haeea.cn/" target="_blank" rel="noopener noreferrer">
         河南省教育考试院 ↗
       </a>
     </div>
@@ -1170,9 +1196,9 @@ function renderHTML() {
     </div>
   </div>
 
-  <!-- 设置排班值日生弹窗 (周一至周五独立设置) -->
+  <!-- 设置排班值日生弹窗 (支持周一至周五 7 个岗位独立设置) -->
   <div class="modal-overlay" id="dutyModal">
-    <div class="modal">
+    <div class="modal" style="width: 460px; max-height: 90vh; overflow-y: auto;">
       <h3 style="margin:0 0 10px; font-size:15px; color:#1e40af;">✏️ 设置周一至周五值日表 (每周循环)</h3>
       <div class="form-group">
         <label>选择星期进行排班：</label>
@@ -1185,20 +1211,32 @@ function renderHTML() {
         </select>
       </div>
       <div class="form-group">
-        <label>班内扫地 (多人用顿号隔开):</label>
-        <input type="text" id="dutySweepingInput" placeholder="如：高林旭、王明哲、王涵乐">
+        <label>扫地 (1人):</label>
+        <input type="text" id="dutySweepingInput" placeholder="如：李彤珈">
       </div>
       <div class="form-group">
-        <label>拖地:</label>
-        <input type="text" id="dutyMoppingInput" placeholder="如：张景豪、孙敏浩、王耀康">
+        <label>拖地 (1人):</label>
+        <input type="text" id="dutyMoppingInput" placeholder="如：李沐洋">
       </div>
       <div class="form-group">
-        <label>擦墙和黑板:</label>
-        <input type="text" id="dutyBoardInput" placeholder="如：王翔宇、查寅诚">
+        <label>擦黑板 (1人):</label>
+        <input type="text" id="dutyBoardInput" placeholder="如：支琼瑶">
       </div>
       <div class="form-group">
-        <label>班外卫生区:</label>
-        <input type="text" id="dutyOutdoorInput" placeholder="如：杨双亮、杨绍博、李赫哲、华梦涛">
+        <label>擦墙壁与窗户 (1人):</label>
+        <input type="text" id="dutyWindowsInput" placeholder="如：张盼盼">
+      </div>
+      <div class="form-group">
+        <label>水桶换水 (1人):</label>
+        <input type="text" id="dutyWaterInput" placeholder="如：付诗博">
+      </div>
+      <div class="form-group">
+        <label>倒垃圾 (2人，顿号隔开):</label>
+        <input type="text" id="dutyTrashInput" placeholder="如：付思恩、苏雅琪">
+      </div>
+      <div class="form-group">
+        <label>卫生区 (6人，顿号隔开):</label>
+        <input type="text" id="dutyOutdoorInput" placeholder="如：高林旭、王明哲、王涵乐、张景豪、孙敏浩、王耀康">
       </div>
       <div class="form-group">
         <label style="color: #b91c1c;">🔐 管理员密码:</label>
@@ -1228,7 +1266,6 @@ function renderHTML() {
 王子轩
 李书研
 许科航
-文俊豪
 魏家旺
 李佳坤
 栾家乐
@@ -1454,47 +1491,38 @@ function renderHTML() {
       }
     }
 
-    // 周一至周五自适应值日表展示
+    // 今日值日生滚动横幅动态渲染
     function renderTodayDuty() {
       const todayNum = getBeijingDayOfWeek();
       const weekNames = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+      const trackEl = document.getElementById("dutyMarqueeTrack");
 
-      // 若为周六(6)或周日(0)，友好提示双休无需值日
+      // 若为周六(6)或周日(0)，友好提示双休
       if (todayNum === 0 || todayNum === 6) {
         document.getElementById("dutyDayTitle").innerText = \`🧹 今日值日生 (\${weekNames[todayNum]})\`;
-        updateDutySection("dutySweeping", "wrapSweep", "周末双休，轮班值日");
-        updateDutySection("dutyMopping", "wrapMop", "保持教室清洁");
-        updateDutySection("dutyBoard", "wrapBoard", "周末双休");
-        updateDutySection("dutyOutdoor", "wrapOutdoor", "轮班值日");
+        trackEl.innerHTML = \`<span style="color:#64748b; font-size:18px; font-weight:700;">🎉 周末若调休，周一至周五轮替值日，周末双休，全员休息 ｜ 请离校前关闭门窗与电源，保持教室内外整洁！</span>\`;
         return;
       }
 
       document.getElementById("dutyDayTitle").innerText = \`🧹 今日值日生 (\${weekNames[todayNum]})\`;
-      const todayData = weeklyDutyData[todayNum] || {
-        sweeping: "未设置", mopping: "未设置", blackboard: "未设置", outdoor: "未设置"
-      };
+      const todayData = weeklyDutyData[todayNum] || {};
 
-      updateDutySection("dutySweeping", "wrapSweep", todayData.sweeping || "暂无安排");
-      updateDutySection("dutyMopping", "wrapMop", todayData.mopping || "暂无安排");
-      updateDutySection("dutyBoard", "wrapBoard", todayData.blackboard || "暂无安排");
-      updateDutySection("dutyOutdoor", "wrapOutdoor", todayData.outdoor || "暂无安排");
-    }
+      const duties = [
+        { tag: "扫地", cls: "tag-sweep", name: todayData.sweeping || "暂无安排" },
+        { tag: "拖地", cls: "tag-mop", name: todayData.mopping || "暂无安排" },
+        { tag: "擦黑板", cls: "tag-board", name: todayData.blackboard || "暂无安排" },
+        { tag: "擦墙壁与窗户", cls: "tag-window", name: todayData.windows || "暂无安排" },
+        { tag: "水桶换水", cls: "tag-water", name: todayData.water || "暂无安排" },
+        { tag: "倒垃圾", cls: "tag-trash", name: todayData.trash || "暂无安排" },
+        { tag: "卫生区", cls: "tag-outdoor", name: todayData.outdoor || "暂无安排" }
+      ];
 
-    // 自动判定文字是否超出宽度，若超出则激活平滑微跑马灯滚动
-    function updateDutySection(textElemId, wrapElemId, content) {
-      const textEl = document.getElementById(textElemId);
-      const wrapEl = document.getElementById(wrapElemId);
-      textEl.innerText = content;
-      wrapEl.title = content; // 悬停显示完整姓名
-
-      // 延迟计算宽度以确保字体已完成渲染
-      setTimeout(() => {
-        if (textEl.scrollWidth > wrapEl.clientWidth + 5) {
-          wrapEl.classList.add("scroll");
-        } else {
-          wrapEl.classList.remove("scroll");
-        }
-      }, 80);
+      trackEl.innerHTML = duties.map(d => \`
+        <span class="duty-item">
+          <span class="duty-tag \${d.cls}">\${d.tag}</span>
+          <span class="duty-person">\${escapeHtml(d.name)}</span>
+        </span>
+      \`).join('<span class="duty-sep">｜</span>');
     }
 
     function openDutyModal() {
@@ -1512,12 +1540,13 @@ function renderHTML() {
 
     function onDutyDayChange() {
       const selectedDay = document.getElementById("dutySelectDay").value;
-      const dayData = weeklyDutyData[selectedDay] || {
-        sweeping: "", mopping: "", blackboard: "", outdoor: ""
-      };
+      const dayData = weeklyDutyData[selectedDay] || {};
       document.getElementById("dutySweepingInput").value = dayData.sweeping || "";
       document.getElementById("dutyMoppingInput").value = dayData.mopping || "";
       document.getElementById("dutyBoardInput").value = dayData.blackboard || "";
+      document.getElementById("dutyWindowsInput").value = dayData.windows || "";
+      document.getElementById("dutyWaterInput").value = dayData.water || "";
+      document.getElementById("dutyTrashInput").value = dayData.trash || "";
       document.getElementById("dutyOutdoorInput").value = dayData.outdoor || "";
     }
 
@@ -1526,6 +1555,9 @@ function renderHTML() {
       const sweeping = document.getElementById("dutySweepingInput").value;
       const mopping = document.getElementById("dutyMoppingInput").value;
       const blackboard = document.getElementById("dutyBoardInput").value;
+      const windows = document.getElementById("dutyWindowsInput").value;
+      const water = document.getElementById("dutyWaterInput").value;
+      const trash = document.getElementById("dutyTrashInput").value;
       const outdoor = document.getElementById("dutyOutdoorInput").value;
       const password = document.getElementById("dutyPwdInput").value;
 
@@ -1534,7 +1566,7 @@ function renderHTML() {
       const res = await fetch("/api/duty/update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dayOfWeek, sweeping, mopping, blackboard, outdoor, password })
+        body: JSON.stringify({ dayOfWeek, sweeping, mopping, blackboard, windows, water, trash, outdoor, password })
       });
       const data = await res.json();
       if (data.error) alert(data.error);
@@ -1744,7 +1776,7 @@ function renderHTML() {
           marqueeEl.innerText = rawNotice.replace(/\\r?\\n+/g, "  ｜  ");
         }
 
-        // 保存周一至周五值日生数据并自动渲染今日值日生
+        // 保存周一至周五值日生数据并自动渲染今日值日横幅
         if (data.weeklyDuty) {
           weeklyDutyData = data.weeklyDuty;
           renderTodayDuty();
